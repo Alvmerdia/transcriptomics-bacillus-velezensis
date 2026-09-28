@@ -1,0 +1,957 @@
+---
+title: "DEG"
+author: "Alvaro Merino"
+date: "2026-08-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# --------------------------------------------------------------#
+# --------------------Librerías y conflictos--------------------#
+# --------------------------------------------------------------#
+
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  warning = FALSE, 
+  message = FALSE)
+
+# Librerías core
+library(tidyverse)
+library(here)
+library(gt)
+library(pagedown)
+library(tidytext)
+library(conflicted)
+
+# Librerías análisis RNA-Seq
+library(DESeq2)
+library(edgeR)
+library(ashr)
+
+# Anotación y Enriquecimiento
+library(clusterProfiler)
+library(enrichplot)
+library(KEGGREST)
+library(rjson)
+library(GO.db)
+library(AnnotationDbi)
+
+# Visualización y exportación
+library(pheatmap)
+library(RColorBrewer)
+library(ggVennDiagram)
+library(gggenes)
+library(flextable)
+library(officer)
+library(patchwork)
+library(ggvenn)
+
+# Gestión de conflictos entre librerías
+conflicts_prefer(dplyr::select)
+conflicts_prefer(dplyr::filter)
+conflicts_prefer(dplyr::rename)
+conflicts_prefer(dplyr::count)
+conflicts_prefer(base::intersect)
+conflicts_prefer(flextable::width)
+```
+
+```{r}
+# ----------------------------------------------------------------------------#
+# --------------------Carga de datos, metadatos y filtrado--------------------#
+# ----------------------------------------------------------------------------#
+
+# Lectura de conteos y metadatos
+raw_counts <- read_tsv(
+  here("data/processed/counts/gene_counts_clean.tsv"),
+  comment = "#")
+
+colData <- read_tsv(
+  here("data/metadata/metadata.tsv")) %>% # metadata.tsv fue ubicado manualmente
+  column_to_rownames("sample") %>%
+  mutate( # Especificamos los niveles de group (condition, time) con sus SRR
+    condition = factor(
+      condition,
+      levels = c("axenic", "coculture")),
+    time = factor(
+      time,
+      levels = c("8h", "13h")),
+    replicate = factor(replicate),
+    group = factor(group,
+      levels = c("axenic_8h","coculture_8h","axenic_13h","coculture_13h")))
+
+# Carga de matriz de conteos y limpieza
+counts_matrix <- raw_counts %>%
+  column_to_rownames("Geneid") %>% # Asignación geneid como identificador
+  select(starts_with("data/processed/aligned")) 
+
+colnames(counts_matrix) <- colnames(counts_matrix) %>%
+  basename() %>%
+  str_remove("\\.bam")
+
+# Filtrado por baja abundancia (>= 10 en las 3 réplicas) 
+keep <- rowSums(counts_matrix >= 10) >= 3
+counts_filtered <- counts_matrix[keep,]
+```
+
+```{r}
+#--------------------------------------------------------#
+# MODELADO por grupos DESeq2 (~group), VST y métricas QC #
+#--------------------------------------------------------#
+# Creación objeto DESeqDataSet (dds)
+dds_group <- DESeqDataSetFromMatrix(
+  countData = counts_filtered,
+  colData = colData,
+  design = ~ group)
+
+dds_group <- DESeq(dds_group)
+
+# Transformación VST para exploración
+vsd_group <- vst(dds_group, blind = TRUE) # ignoramos las etiquetas del dds_group
+
+# Extracción de matriz PCA y distancias entre muestras
+pca_data_group <- plotPCA(vsd_group, intgroup = c("condition", "time"), returnData = TRUE)
+percentVar_group <- round(100 * attr(pca_data_group, "percentVar"))
+
+sample_distances_group <- dist(t(assay(vsd_group)))
+sample_dist_matrix_group <- as.matrix(sample_distances_group)
+```
+
+```{r}
+#---------------------------------------------#
+# Gráficas - QC (PCA, distancias, dispersión) #
+#---------------------------------------------#
+# PCA Plot
+pca_plot <- ggplot(pca_data_group, aes(x = PC1, y = PC2, color = condition, shape = time)) +
+  geom_point(size = 4, alpha = 0.85) + 
+  xlab(paste0("PC1: ", percentVar_group[1], "% varianza")) +
+  ylab(paste0("PC2: ", percentVar_group[2], "% varianza")) +
+  labs(
+    title = expression(paste("PCA - ", italic("Bacillus velezensis"), " 83")),
+    subtitle = "Estructura global de los datos de RNA-Seq",
+    color = "Condición", 
+    shape = "Tiempo") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "right") +
+  scale_color_brewer(palette = "Set1", labels = c("Axénico", "Cocultivo"))
+
+# Exportacion PCA
+ggsave(
+  filename = here("results/figures/Fig_PCA_QC_Samples.png"),
+  plot = pca_plot,
+  width = 7, height = 5.5, units = "in", dpi = 300)
+
+# Exportacion Heatmap de distancias entre muestras
+colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(255)
+
+png(
+  filename = here("results/figures/Fig_Sample_Distance_Matrix.png"),
+  width = 7, height = 6, units = "in", res = 300)
+pheatmap(
+  sample_dist_matrix_group,
+  clustering_distance_rows = sample_distances_group,
+  clustering_distance_cols = sample_distances_group,
+  col = colors,
+  main = "Distancia Euclídea entre Muestras (VST)")
+dev.off()
+
+# Exportacion Gráfico de Dispersión
+png(
+  filename = here("results/figures/Fig_DESeq2_Dispersion_Plot.png"),
+  width = 7, height = 5.5, units = "in", res = 300)
+
+plotDispEsts(
+  dds_group,
+  main = "Estimación de Dispersión (DESeq2)")
+dev.off()
+```
+
+```{r}
+#-------------------------------------------------------------#
+# Contrastes 8h/13h, Extracción DEGs y clasificación temporal #
+#-------------------------------------------------------------#
+# Incorporación contrastes ashr
+res_8h_shrink  <- lfcShrink(dds_group, contrast = c("group", "coculture_8h", "axenic_8h"), type = "ashr")
+res_13h_shrink <- lfcShrink(dds_group, contrast = c("group", "coculture_13h", "axenic_13h"), type = "ashr")
+
+# Función que transforma res_shrink y convierte nombres filas en Geneid
+# para filtrado simple
+get_deg_table <- function(res_shrink, padj_cut = 0.05, lfc_cut = 1) {
+  as.data.frame(res_shrink) %>%
+    rownames_to_column("Geneid") %>%
+    mutate(
+      diffexpressed = case_when(
+        padj < padj_cut & log2FoldChange > lfc_cut  ~ "Up",
+        padj < padj_cut & log2FoldChange < -lfc_cut ~ "Down",
+        TRUE ~ "NoDEG"))}
+
+deg_8h  <- get_deg_table(res_8h_shrink)
+deg_13h <- get_deg_table(res_13h_shrink)
+
+degs_8h  <- deg_8h %>% filter(diffexpressed != "NoDEG") %>% pull(Geneid)
+degs_13h <- deg_13h %>% filter(diffexpressed != "NoDEG") %>% pull(Geneid)
+all_degs <- unique(c(degs_8h, degs_13h))
+
+# Clasificación de patrones temporales
+deg_classified <- tibble(Geneid = all_degs) %>%
+  mutate(
+    status_8h  = deg_8h$diffexpressed[match(Geneid, deg_8h$Geneid)],
+    status_13h = deg_13h$diffexpressed[match(Geneid, deg_13h$Geneid)],
+    pattern = case_when(
+      status_8h == "Up"   & status_13h == "NoDEG" ~ "Early Up",
+      status_8h == "Down" & status_13h == "NoDEG" ~ "Early Down",
+      status_8h == "NoDEG" & status_13h == "Up"   ~ "Late Up",
+      status_8h == "NoDEG" & status_13h == "Down" ~ "Late Down",
+      status_8h == "Up"   & status_13h == "Up"   ~ "Sustained Up",
+      status_8h == "Down" & status_13h == "Down" ~ "Sustained Down",
+      status_8h != status_13h & status_8h != "NoDEG" & status_13h != "NoDEG" ~ "Inverted",
+      TRUE ~ "Other"))
+
+# Matrices escaladas para heatmaps
+mat_8h  <- t(scale(t(assay(vsd_group)[degs_8h, ])))
+mat_13h <- t(scale(t(assay(vsd_group)[degs_13h, ])))
+
+# Listas de genes activados/reprimidos
+#up_genes <- list("Up 8h" = deg_8h$Geneid[deg_8h$diffexpressed == "Up"], "Up 13h" = deg_13h$Geneid[deg_13h$diffexpressed == "Up"])
+#down_genes <- list("Down 8h" = deg_8h$Geneid[deg_8h$diffexpressed == "Down"], "Down 13h" = deg_13h$Geneid[deg_13h$diffexpressed == "Down"])
+```
+
+```{r}
+#---------------------------------------------------------#
+#  Gráficas - Volcano plots, Heatmaps y Diagramas de Venn #
+#---------------------------------------------------------#
+# Función para volcano plots
+plot_volcano <- function(deg_df, title) {
+  deg_df_clean <- deg_df %>% drop_na(padj)
+  ggplot(deg_df_clean, aes(x = log2FoldChange, y = -log10(padj), color = diffexpressed)) +
+    geom_point(alpha = 0.5, size = 1.5) +
+    scale_color_manual(values = c("Down" = "blue", "NoDEG" = "grey", "Up" = "red")) +
+    geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+    theme_minimal() +
+    labs(title = title, x = "Log2 Fold Change (Shrunk)", y = "-Log10 p-adjusted")}
+
+p_volc_8h  <- plot_volcano(deg_8h, "Cocultivo vs Axenic (8h)")
+p_volc_13h <- plot_volcano(deg_13h, "Cocultivo vs Axenic (13h)")
+
+# Combinación y extracción VOLCANO
+fig_volcanos <- p_volc_8h + p_volc_13h
+ggsave(here("results/figures/Fig_Volcano_Plots_8h_&_13h.png"), fig_volcanos, width = 10, height = 4.5, dpi = 300)
+
+# Diagrama de Venn genes activados/reprimidos
+
+# Listas de genes activados/reprimidos
+up_genes <- list("Up 8h" = deg_8h$Geneid[deg_8h$diffexpressed == "Up"], "Up 13h" = deg_13h$Geneid[deg_13h$diffexpressed == "Up"])
+down_genes <- list("Down 8h" = deg_8h$Geneid[deg_8h$diffexpressed == "Down"], "Down 13h" = deg_13h$Geneid[deg_13h$diffexpressed == "Down"])
+
+up_list <- list(
+  "Up 8h"  = up_genes[["Up 8h"]],
+  "Up 13h" = up_genes[["Up 13h"]])
+
+down_list <- list(
+  "Down 8h"  = down_genes[["Down 8h"]],
+  "Down 13h" = down_genes[["Down 13h"]])
+
+p_venn_up <- ggvenn(
+  up_list, 
+  fill_color = c("royalblue", "lightcyan"),
+  stroke_size = 0.5, 
+  set_name_size = 4,
+  text_size = 3.5) + 
+  ggtitle("Genes Activados (Up)")
+
+p_venn_down <- ggvenn(
+  down_list, 
+  fill_color = c("yellow", "darkorange"),
+  stroke_size = 0.5, 
+  set_name_size = 4,
+  text_size = 3.5) + 
+  ggtitle("Genes Reprimidos (Down)")
+
+# Combinación y extracción VENN
+fig_venns <- p_venn_up + p_venn_down
+ggsave(here("results/figures/Fig_Venn_Diagrams_Up_Down.png"), fig_venns, width = 9, height = 4, dpi = 300)
+```
+
+```{r}
+#----------------------------------------------------------------#
+# MODELADO factorial DESeq2 (~condition*time), interacción y VST #
+#----------------------------------------------------------------#
+dds_interaction <- DESeqDataSetFromMatrix(
+  countData = counts_filtered,
+  colData   = colData,
+  design    = ~ condition * time) # evalúa si la respuesta en time cambia según condición
+
+dds_interaction <- DESeq(dds_interaction)
+
+# Ajustado por shrinkage
+res_interaction_shrink <- lfcShrink(
+  dds_interaction,
+  coef = "conditioncoculture.time13h", # mide cuánto cambia t13h en cocultivo respecto control (axenic 8h)
+  type = "ashr")
+
+interaction_table <- as.data.frame(res_interaction_shrink) %>%
+  rownames_to_column("Geneid") %>%
+  mutate(
+    diffexpressed = case_when(
+      padj < 0.05 & log2FoldChange > 1  ~ "Interaction Up", #expresión mayor en cocultivo
+      padj < 0.05 & log2FoldChange < -1 ~ "Interaction Down", #expresión menor en cocultivo
+      TRUE ~ "NoDEG"))
+
+interaction_genes <- interaction_table %>% filter(diffexpressed != "NoDEG") %>% pull(Geneid)
+
+vsd_interaction <- vst(dds_interaction, blind = FALSE) # evita sobreestimación
+mat_interaction <- t(scale(t(assay(vsd_interaction)[interaction_genes, ])))
+```
+
+```{r}
+#--------------------------------------------------------------#
+# Gráficas - Volcano plot y Heatmap con la interacción #
+#--------------------------------------------------------------#
+plot_volcano_interaction <- function(df, title) {
+  df_clean <- df %>% drop_na(padj)
+  ggplot(df_clean, aes(x = log2FoldChange, y = -log10(padj), color = diffexpressed)) +
+    geom_point(alpha = 0.5, size = 1.5) +
+    scale_color_manual(values = c("Interaction Down" = "blue", "NoDEG" = "grey", "Interaction Up" = "red")) +
+    geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+    theme_minimal() +
+    labs(title = title, x = "Efecto Diferencial del Co-cultivo (Interacción)", y = "-Log10 p-adjusted")}
+
+# Extracción volcanos, heatmap
+p_volc_inter <- plot_volcano_interaction(interaction_table, "Volcano Plot: Interacción Condición x Tiempo")
+ggsave(here("results/figures/Fig_Volcano_Plot_Interaccion.png"), p_volc_inter, width = 6, height = 5, dpi = 300)
+
+png(here("results/figures/Fig_Heatmap_Interaccion_Condition_Time.png"), width = 8.5, height = 7, units = "in", res = 300)
+pheatmap(
+  mat_interaction,
+  annotation_col = as.data.frame(colData(dds_interaction)[, c("condition", "time")]),
+  show_rownames = FALSE, cluster_cols = TRUE, cluster_rows = TRUE, treeheight_row = 0,
+  main = paste("Genes con interacción condición x tiempo (N =", length(interaction_genes), ")"))
+dev.off()
+
+```
+
+```{r}
+#------------------------------------------------------------------#
+# Análisis - Anotación funcional e integración en tabla maestra #
+#------------------------------------------------------------------#
+# Carga de la anotación resultado de eggnog-mapper
+eggnog_raw <- read_tsv(here("data/processed/annotation/query.emapper.annotations"), comment = "##") %>%
+  rename(Geneid = `#query`) %>% 
+  mutate(Geneid = str_remove(Geneid, "^gene-"))
+
+# Lectura de definiciones oficiales COG en NCBI
+cog_def_official <- read_tsv(
+  "https://ftp.ncbi.nlm.nih.gov/pub/COG/COG2024/data/cog-24.def.tab", # USo de versión más reciente
+  col_names = c("COG_ID", "COG_letter", "COG_Name", "Gene", "Pathway", "PubMed_IDs", "PDB_IDs"),
+  col_types = "ccccccc") # lectura de las columnas como character
+
+cog_fun_raw <- read_lines("https://ftp.ncbi.nlm.nih.gov/pub/COG/COG2024/data/cog-24.fun.tab")
+
+cog_fun_official <- tibble(line = cog_fun_raw) %>%
+  filter(str_detect(line, "^[A-Z]\\s+")) %>%
+  mutate(
+    COG_letter = str_extract(line, "^[A-Z]"),
+    Category_Name = str_extract(line, "[^\t]+$")) %>%
+  select(COG_letter, Category_Name)
+
+# Integración TABLA DEGs con anotación eggnog-mapper
+deg_annotated_master <- deg_classified %>%
+  left_join(
+    eggnog_raw %>% select(Geneid, COG_ID = COG_category, Preferred_name, GOs, KEGG_Pathway, PFAMs),
+    by = "Geneid") %>%
+  left_join(cog_def_official %>% select(COG_ID, COG_letter, COG_Name), by = "COG_ID") %>%
+  left_join(cog_fun_official, by = "COG_letter")
+
+# Exportación de deg_annotated_master
+write.csv(deg_annotated_master, here("results/anexo_tabla_maestra_anotacion.csv"))
+```
+
+```{r}
+#--------------------------------------------------------#
+# Preparación del universo de genes y mapeos funcionales #
+#--------------------------------------------------------#
+
+# Los genes que pasan filtro de abundancia inicial son el Universo
+gene_universe <- rownames(counts_filtered)
+
+# Agrupación directa para compareCluster
+gene_clusters <- deg_classified %>%
+  filter(pattern != "Other") %>% # Se excluyen patrones no identificados
+  split(.$pattern) %>%
+  lapply(function(x) x$Geneid)
+
+#-----------------------------------------------#
+# Mapeos KEGG - Extracción y relación ID-Nombre #
+#-----------------------------------------------#
+term_to_gene_kegg <- eggnog_raw %>%
+  select(Geneid, KEGG_Pathway) %>%
+  drop_na(KEGG_Pathway) %>%
+  filter(KEGG_Pathway != "-" & KEGG_Pathway != "") %>%
+  separate_rows(KEGG_Pathway, sep = ",") %>%
+  mutate(KEGG_Pathway = str_extract(KEGG_Pathway, "\\d{5}")) %>%
+  drop_na(KEGG_Pathway) %>%
+  select(KEGG_Pathway, Geneid)
+
+term2name_pathway <- keggList("pathway") %>%
+  enframe(name = "KEGG_Pathway", value = "Pathway_Name") %>%
+  mutate(
+    KEGG_Pathway = str_extract(KEGG_Pathway, "\\d{5}"),
+    Pathway_Name = str_remove(Pathway_Name, " - Bacillus velezensis.*"))
+
+#---------------------#
+# Mapeos GO (BP y MF) #
+#---------------------#
+term_to_gene_go <- eggnog_raw %>%
+  select(Geneid, GOs) %>%
+  drop_na(GOs) %>%
+  filter(GOs != "-" & GOs != "") %>%
+  separate_rows(GOs, sep = ",") %>%
+  mutate(GOs = str_trim(GOs)) %>%
+  select(GOID = GOs, Geneid) %>%
+  distinct()
+
+go_info <- AnnotationDbi::select( # acceso a base de datos GO
+  GO.db,
+  keys     = unique(term_to_gene_go$GOID),
+  columns  = c("GOID", "TERM", "ONTOLOGY"),
+  keytype  = "GOID") %>% 
+  drop_na(ONTOLOGY)
+
+# Creación de subconjuntos por ontología según IDs
+# GO-BP
+t2g_bp <- term_to_gene_go %>% 
+  filter(GOID %in% (go_info %>% filter(ONTOLOGY == "BP") %>% pull(GOID)))
+t2n_bp <- go_info %>% filter(ONTOLOGY == "BP") %>% select(GOID, TERM)
+
+# GO-MF
+t2g_mf <- term_to_gene_go %>% 
+  filter(GOID %in% (go_info %>% filter(ONTOLOGY == "MF") %>% pull(GOID)))
+t2n_mf <- go_info %>% filter(ONTOLOGY == "MF") %>% select(GOID, TERM)
+```
+
+```{r}
+# -----------------------------------------------------------------------------#
+# ------------------------------Análisis ORA-----------------------------------#
+# -----------------------------------------------------------------------------#
+
+#--------------------------------------------------------------#
+# ORA KEGG (Rutas inducidas vs reprimidas por patrón temporal) #
+#--------------------------------------------------------------#
+cluster_up <- deg_classified %>% 
+  filter(str_detect(pattern, "Up")) %>% 
+  split(.$pattern) %>% 
+  lapply(function(x) x$Geneid)
+
+cluster_down <- deg_classified %>% 
+  filter(str_detect(pattern, "Down")) %>% 
+  split(.$pattern) %>% 
+  lapply(function(x) x$Geneid)
+
+#----------#
+# ORA KEGG #
+#----------#
+comp_kegg_up <- compareCluster(
+  geneClusters  = cluster_up,
+  fun           = "enricher",
+  universe      = gene_universe,
+  TERM2GENE     = term_to_gene_kegg,
+  TERM2NAME     = term2name_pathway,
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05)
+
+comp_kegg_down <- compareCluster(
+  geneClusters  = cluster_down,
+  fun           = "enricher",
+  universe      = gene_universe,
+  TERM2GENE     = term_to_gene_kegg,
+  TERM2NAME     = term2name_pathway,
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05)
+
+#-----------#
+# ORA GO-BP #
+#-----------#
+comp_go_bp <- compareCluster(
+  geneClusters  = gene_clusters, # Usa todos los clústeres temporales (Up y Down)
+  fun           = "enricher",
+  universe      = gene_universe,
+  TERM2GENE     = t2g_bp,
+  TERM2NAME     = t2n_bp,
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05)
+
+# Dotplots ORA KEGG Up / Down
+# Panel A: KEGG Up
+p_kegg_up <- dotplot(comp_kegg_up, showCategory = 8, label_format = 25) + # etiquetas de formateo a 25 char
+  labs(title = "A) Rutas KEGG Sobrerrepresentadas\n(Inducidas)", x = NULL, y = "Ruta KEGG") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+        plot.title = element_text(size = 10, face = "bold"))
+
+# Panel B: KEGG Down (título con \n para evitar solapamiento)
+p_kegg_down <- dotplot(comp_kegg_down, showCategory = 8, label_format = 25) +
+  labs(title = "B) Rutas KEGG Sobrerrepresentadas\n(Reprimidas)", x = NULL, y = NULL) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+        plot.title = element_text(size = 10, face = "bold"))
+
+# Panel C: GO-BP
+p_go_bp <- dotplot(comp_go_bp, showCategory = 8, label_format = 35) +
+  labs(title = "C) Procesos Biológicos (GO-BP) Sobrerrepresentados", x = "Patrón Temporal", y = "Término GO (BP)") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+        plot.title = element_text(size = 10, face = "bold"))
+
+# Unificación paneles
+fig_ora_combined <- (p_kegg_up | p_kegg_down) / p_go_bp + 
+  plot_layout(heights = c(1.2, 1), widths = c(1, 1.1))
+
+# Extracción dotplot combinado
+ggsave(here("results/figures/Fig_ORA_KEGG_GOBP.png"), fig_ora_combined, width = 14, height = 12, dpi = 300)
+
+# TABLA MEMORIA Rutas metabólicas (KEGG) y procesos biológicos (GO-BP) significativamente enriquecidos por clúster temporal (ORA, FDR < 0.05)
+# Aglutinación ORA
+resumen_ora_verificado <- bind_rows(
+  as.data.frame(comp_kegg_up) %>% mutate(DB = "KEGG"),
+  as.data.frame(comp_kegg_down) %>% mutate(DB = "KEGG"),
+  as.data.frame(comp_go_bp) %>% mutate(DB = "GO-BP"))
+
+# Selección de columnas
+tabla_docx_ora <- resumen_ora_verificado %>%
+  group_by(Cluster, DB) %>%
+  slice_min(order_by = p.adjust, n = 3, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(Description = str_replace_all(Description, "/", "/ ")) %>% 
+  select(Cluster, DB, Description, GeneRatio, p.adjust) %>%
+  mutate(p.adjust = formatC(p.adjust, format = "e", digits = 2))
+
+# Construcción flextable
+ft_ora <- flextable(tabla_docx_ora) %>%
+  set_header_labels(
+    Cluster     = "Patrón Temporal",
+    DB          = "Fuente",
+    Description = "Ruta / Proceso Biológico",
+    GeneRatio   = "GeneRatio",
+    p.adjust    = "p-adj (FDR)") %>%
+  theme_vanilla() %>%
+  
+  # Tipografía
+  fontsize(size = 8.5, part = "all") %>%
+  fontsize(size = 8.5, part = "header") %>%
+  bold(part = "header") %>%
+  italic(j = "Description", part = "body") %>%
+  bg(bg = "white", part = "header") %>%
+  
+  # Alineaciones
+  align(align = "center", part = "all") %>%
+  align(j = c("Cluster", "Description"), align = "left", part = "body") %>%
+  
+  # Anchos para memoria 
+  width(j = "Cluster",     width = 1.1) %>%
+  width(j = "DB",          width = 0.6) %>%
+  width(j = "Description", width = 3.5) %>%
+  width(j = "GeneRatio",   width = 0.7) %>%
+  width(j = "p.adjust",    width = 0.7) %>%
+  
+  # Relleno de celdas
+  padding(padding.top = 3, padding.bottom = 3, padding.left = 2, padding.right = 2, part = "all")
+
+save_as_docx(ft_ora, path = here("results/Tabla_ORA_Summary_Formatted.docx"))
+```
+```{r}
+# -----------------------------------------------------------------------------#
+# ------------------------------Análisis GSEA----------------------------------#
+# -----------------------------------------------------------------------------#
+
+# Función  para crear la matriz rankeada de genes
+create_ranked_list <- function(res_shrink) {
+  res_shrink %>%
+    as.data.frame() %>%
+    rownames_to_column("Geneid") %>%
+    drop_na(log2FoldChange) %>%
+    dplyr::select(Geneid, log2FoldChange) %>%
+    deframe() %>%
+    sort(decreasing = TRUE)}
+
+ranked_8h  <- create_ranked_list(res_8h_shrink)
+ranked_13h <- create_ranked_list(res_13h_shrink)
+
+set.seed(123) # Para reproducibilidad
+
+# ---------------------------#
+# GSEA rutas KEGG (8h y 13h) #
+# ---------------------------#
+gsea_kegg_8h <- GSEA(geneList = ranked_8h, TERM2GENE = term_to_gene_kegg, TERM2NAME = term2name_pathway, pvalueCutoff = 0.05, pAdjustMethod = "BH", verbose = FALSE)
+gsea_kegg_13h <- GSEA(geneList = ranked_13h, TERM2GENE = term_to_gene_kegg, TERM2NAME = term2name_pathway, pvalueCutoff = 0.05, pAdjustMethod = "BH", verbose = FALSE)
+
+# --------------#
+# 2. GSEA GO-BP #
+# --------------#
+gsea_bp_8h  <- GSEA(geneList = ranked_8h,  TERM2GENE = t2g_bp, TERM2NAME = t2n_bp, pvalueCutoff = 0.25, pAdjustMethod = "BH", verbose = FALSE)
+gsea_bp_13h <- GSEA(geneList = ranked_13h, TERM2GENE = t2g_bp, TERM2NAME = t2n_bp, pvalueCutoff = 0.25, pAdjustMethod = "BH", verbose = FALSE)
+
+# --------------#
+# 3. GSEA GO-MF #
+# --------------#
+gsea_mf_8h  <- GSEA(geneList = ranked_8h,  TERM2GENE = t2g_mf, TERM2NAME = t2n_mf, pvalueCutoff = 0.25, pAdjustMethod = "BH", verbose = FALSE)
+gsea_mf_13h <- GSEA(geneList = ranked_13h, TERM2GENE = t2g_mf, TERM2NAME = t2n_mf, pvalueCutoff = 0.25, pAdjustMethod = "BH", verbose = FALSE)
+
+# Distinción de filas por ontología empleada y aglutinación en un .csv
+bind_rows(
+  as.data.frame(gsea_kegg_8h)  %>% mutate(time = "8h",  ontology = "KEGG"),
+  as.data.frame(gsea_kegg_13h) %>% mutate(time = "13h", ontology = "KEGG"),
+  as.data.frame(gsea_bp_8h)    %>% mutate(time = "8h",  ontology = "GO-BP"),
+  as.data.frame(gsea_bp_13h)   %>% mutate(time = "13h", ontology = "GO-BP"),
+  as.data.frame(gsea_mf_8h)    %>% mutate(time = "8h",  ontology = "GO-MF"),
+  as.data.frame(gsea_mf_13h)   %>% mutate(time = "13h", ontology = "GO-MF")) %>% 
+  arrange(p.adjust) %>% 
+  write_csv(here("results/anexo_gsea_results_all_8h_13h.csv"))
+
+# TABLA MEMORIA GSEA KEGG/GO-BP y GO-MF
+# Extraer datos significativos/exploratorios a 13h
+top_kegg_13h <- as.data.frame(gsea_kegg_13h) %>%
+  filter(p.adjust < 0.05) %>% # significativo
+  mutate(Domain = "KEGG") %>%
+  select(Domain, Description, setSize, NES, p.adjust)
+
+top_go_bp_13h <- as.data.frame(gsea_bp_13h) %>%
+  filter(p.adjust < 0.25) %>% # exploratorio
+  mutate(Domain = "GO-BP") %>%
+  select(Domain, Description, setSize, NES, p.adjust)
+
+top_go_mf_13h <- as.data.frame(gsea_mf_13h) %>%
+  filter(p.adjust < 0.25) %>% # exploratorio
+  mutate(Domain = "GO-MF") %>%
+  select(Domain, Description, setSize, NES, p.adjust)
+
+# Unificación
+gsea_summary_table <- bind_rows(top_kegg_13h, top_go_bp_13h, top_go_mf_13h) %>%
+  mutate(
+    Description = str_replace_all(Description, "/", "/ "),
+    NES = sprintf("%.2f", NES),
+    p.adjust = formatC(p.adjust, format = "e", digits = 2))
+
+# Consolidar y formatear texto / nums
+ft_gsea <- flextable(gsea_summary_table) %>%
+  set_header_labels(
+    Domain      = "Dominio",
+    Description = "Ruta / Proceso Biológico / Función",
+    setSize     = "Tamaño",
+    NES         = "NES",
+    p.adjust    = "p-adj (FDR)") %>%
+  theme_vanilla() %>%
+  fontsize(size = 8.5, part = "all") %>%
+  bold(part = "header") %>%
+  italic(j = "Description", part = "body") %>%
+  bg(bg = "white", part = "header") %>%
+  align(align = "center", part = "all") %>%
+  align(j = c("Domain", "Description"), align = "left", part = "body") %>%
+  width(j = "Domain",      width = 0.8) %>%
+  width(j = "Description", width = 3.8) %>%
+  width(j = "setSize",     width = 0.6) %>%
+  width(j = "NES",         width = 0.6) %>%
+  width(j = "p.adjust",    width = 0.8) %>%
+  set_table_properties(layout = "fixed") %>%
+  padding(padding.top = 3, padding.bottom = 3, padding.left = 2, padding.right = 2, part = "all")
+
+save_as_docx(ft_gsea, path = here("results/Tabla_GSEA_Summary_Formatted.docx"))
+
+#---------------#
+# GRÁFICAS KEGG #
+#---------------#
+# Dotplot Comparativo 8h vs 13h (KEGG)
+valid_gsea_kegg <- list("8h" = gsea_kegg_8h, "13h" = gsea_kegg_13h) %>% 
+  keep(~ !is.null(.x) && nrow(as.data.frame(.x)) > 0)
+
+if (length(valid_gsea_kegg) > 0) {
+  p_dotplot <- dotplot(merge_result(valid_gsea_kegg), showCategory = 10) + 
+    ggtitle("Evolución temporal de rutas KEGG") + 
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  print(p_dotplot)
+  ggsave(here("results/figures/Fig_gsea_kegg_dotplot_8h_vs_13h.png"), plot = p_dotplot, width = 8, height = 6, dpi = 300)}
+
+# Plots específicos 13h KEGG
+# Ridgeplot
+if (!is.null(gsea_kegg_13h) && nrow(as.data.frame(gsea_kegg_13h)) > 0) {
+  
+  p_ridge <- ridgeplot(gsea_kegg_13h, showCategory = 8) + 
+    labs(x = "Log2FC", title = "Distribución Log2FC en Rutas KEGG (13h)") + 
+    theme_bw()
+  print(p_ridge)
+  ggsave(here("results/figures/Fig_gsea_kegg_ridgeplot_13h.png"), plot = p_ridge, width = 8, height = 6, dpi = 300)}
+```
+
+```{r}
+#---------------------------------------------------#
+  # 6.4 Perfilado funcional COG por patrón temporal 
+#---------------------------------------------------#
+# Tabla completa de proporciones COG (top 3 por patrón)
+cog_top3_clean <- deg_annotated_master %>%
+  filter(!is.na(COG_letter) & COG_letter != "-") %>%
+  filter(!is.na(Category_Name) & Category_Name != "") %>%
+  filter(!COG_letter %in% c("S", "R")) %>% # Separación de funciones desconocidas y generales
+  separate_rows(COG_letter, sep = "") %>% # Separación de múltiples letras asignadas
+  filter(COG_letter != "") %>%
+  count(pattern, Category_Name) %>%
+  group_by(pattern) %>%
+  mutate(prop = round(n / sum(n) * 100, 1)) %>%
+  slice_max(order_by = prop, n = 3, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(Category_Name_wrapped = str_wrap(Category_Name, width = 25)) %>% # salto de línea si línea > 25 char
+  mutate(Category_Name_wrapped = reorder_within(Category_Name_wrapped, prop, pattern))
+
+# Generación y guardado de figura COG
+fig_cog <- ggplot(cog_top3_clean, aes(x = prop, y = Category_Name_wrapped, fill = pattern)) +
+  geom_col(show.legend = FALSE, width = 0.7) +
+  geom_text(aes(label = paste0(prop, "%")), hjust = -0.15, size = 2.6) +
+  facet_wrap(~ pattern, scales = "free", ncol = 2) +
+  scale_y_reordered() +
+  scale_x_continuous(labels = scales::label_percent(scale = 1), limits = c(0,max(cog_top3_clean$prop) * 1.35), expand = c(0, 0)) +
+  labs(title = "Principales Categorías COG por Patrón Temporal", x = "Proporción de genes (%)", y = NULL) +
+  theme_bw() +
+  theme(strip.background = element_rect(fill = "lightgray"),
+        strip.text = element_text(face = "bold", size = 9),
+        axis.text.y = element_text(size = 7.5, lineheight = 0.85),
+        panel.grid.major.y = element_blank())
+
+ggsave(here("results/figures/Fig_Categorias_COG_por_Patron_Temporal.png"), fig_cog, width = 9, height = 8, dpi = 300)
+```
+
+```{r}
+#-----------------------------------------------------------------------------------#
+# Lectura e integración antiSMASH - extracción BGCs, cruze con DEGs y tabla resumen #
+#-----------------------------------------------------------------------------------#
+# Lectura del archivo json incorporado PREVIAMENTE
+antismash_json_path <- here("data/processed/annotation/NZ_CP034203.1/NZ_CP034203.1.json") 
+antismash_raw <- fromJSON(file = antismash_json_path)
+
+# Creación de un a función que itere sobre cada registro del .json
+df_bgc_genes <- map_df(antismash_raw$records, function(rec) {
+  features <- rec$features
+  
+  # Regiones
+  df_reg <- keep(features, ~ .x$type == "region") %>%
+    map_df(function(r) {
+      q <- r$qualifiers
+      tibble(
+        Region      = paste0("Region_", q$region_number[[1]] %||% NA_character_),
+        BGC_Product = paste(unlist(q$product), collapse = "/"),
+        reg_start   = as.numeric(str_extract(r$location, "(?<=\\[)\\d+")),
+        reg_end     = as.numeric(str_extract(r$location, "(?<=:)\\d+")))})
+
+  # CDS
+  df_cds <- keep(features, ~ .x$type == "CDS") %>%
+    map_df(function(c) {
+      q <- c$qualifiers
+      tibble(
+        Geneid    = str_remove(q$locus_tag[[1]] %||% NA_character_, "^gene-"),
+        Gene_Name = q$gene[[1]] %||% q$locus_tag[[1]] %||% NA_character_,
+        Gene_Kind = q$gene_kind[[1]] %||% "other",
+        cds_start = as.numeric(str_extract(c$location, "(?<=\\[)\\d+")),
+        cds_end   = as.numeric(str_extract(c$location, "(?<=:)\\d+")))}) %>% 
+    filter(!is.na(Geneid))
+  
+  # Asignación por coordenadas
+  df_cds %>%
+    cross_join(df_reg) %>%
+    filter(cds_start >= reg_start & cds_end <= reg_end) %>%
+    select(Region, BGC_Product, Geneid, Gene_Name, Gene_Kind)}) %>% 
+  distinct()
+
+# Cruce con DEGs
+bgc_deg_master <- df_bgc_genes %>%
+  left_join(deg_8h %>% select(Geneid, LFC_8h = log2FoldChange, padj_8h = padj, status_8h = diffexpressed), by = "Geneid") %>%
+  left_join(deg_13h %>% select(Geneid, LFC_13h = log2FoldChange, padj_13h = padj, status_13h = diffexpressed), by = "Geneid") %>%
+  left_join(interaction_table %>% select(Geneid, LFC_Inter = log2FoldChange, padj_Inter = padj, status_Inter = diffexpressed), by = "Geneid") %>%
+  mutate(across(starts_with("status_"), ~ replace_na(.x, "NoDEG")))
+
+# Agrupación de clusters por regiones
+bgc_dynamics_table <- bgc_deg_master %>%
+  group_by(Region, BGC_Product) %>%
+  summarise(
+    # Conteos por categoría, eliminando NAs
+    Total_Genes        = n(),
+    Core_Total         = sum(Gene_Kind == "biosynthetic", na.rm = TRUE),
+    BioAdd_Total       = sum(Gene_Kind == "biosynthetic-additional", na.rm = TRUE),
+    Transporters       = sum(Gene_Kind == "transport", na.rm = TRUE),
+    Regulators         = sum(Gene_Kind == "regulatory", na.rm = TRUE),
+    Other_Genes        = sum(Gene_Kind == "other", na.rm = TRUE),
+    Total_Biosynthetic = Core_Total + BioAdd_Total,
+    
+    # Actividad Biosintética (8 vs 13h)
+    Core_Up_8h         = sum(Gene_Kind == "biosynthetic" & status_8h == "Up", na.rm = TRUE),
+    Core_Up_13h        = sum(Gene_Kind == "biosynthetic" & status_13h == "Up", na.rm = TRUE),
+    All_Bio_Up_8h      = sum(Gene_Kind %in% c("biosynthetic", "biosynthetic-additional") & status_8h == "Up", na.rm = TRUE),
+    All_Bio_Up_13h     = sum(Gene_Kind %in% c("biosynthetic", "biosynthetic-additional") & status_13h == "Up", na.rm = TRUE),
+    
+    # DEGs totales (8h vs 13h)
+    DEGs_Up_8h         = sum(status_8h == "Up", na.rm = TRUE),
+    DEGs_Up_13h        = sum(status_13h == "Up", na.rm = TRUE),
+    DEGs_Down_8h       = sum(status_8h == "Down", na.rm = TRUE),
+    DEGs_Down_13h      = sum(status_13h == "Down", na.rm = TRUE),
+    
+    # Promedio Regional
+    Mean_LFC_8h        = round(mean(LFC_8h, na.rm = TRUE), 2),
+    Mean_LFC_13h       = round(mean(LFC_13h, na.rm = TRUE), 2),
+    .groups            = "drop") %>%
+  arrange(desc(All_Bio_Up_13h), desc(All_Bio_Up_8h))
+
+#-----------------------------------#
+# TABLA MEMORIA de principales BGCs #
+#-----------------------------------#
+bgc_main_compact <- bgc_dynamics_table %>%
+  select(
+    Region, 
+    BGC_Product, 
+    Total_Genes, 
+    Total_Biosynthetic, 
+    All_Bio_Up_8h, 
+    All_Bio_Up_13h, 
+    Mean_LFC_8h, 
+    Mean_LFC_13h) %>%
+  # Saltos de línea en palabras compuestas reemplazando '/' por '/ '
+  mutate(BGC_Product = str_replace_all(BGC_Product, "/", "/ "))
+
+# Construcción de la tabla con anchos recalibrados
+ft_main <- bgc_main_compact %>%
+  flextable() %>%
+  set_header_labels(
+    Region             = "Region",
+    BGC_Product        = "Producto Biosintético",
+    Total_Genes        = "Total Genes",
+    Total_Biosynthetic = "Genes Bio.",
+    All_Bio_Up_8h      = "Bio. Up\n(8 h)",
+    All_Bio_Up_13h     = "Bio. Up\n(13 h)",
+    Mean_LFC_8h        = "LFC Prom.\n(8 h)",
+    Mean_LFC_13h       = "LFC Prom.\n(13 h)") %>%
+  theme_vanilla() %>%
+  
+  # Estilo de fuente y alineaciones
+  fontsize(size = 8.5, part = "all") %>%
+  fontsize(size = 8.5, part = "header") %>%
+  bold(part = "header") %>%
+  align(align = "center", part = "body") %>%
+  align(j = c("Region", "BGC_Product"), align = "left", part = "body") %>%
+  
+  # Anchos ajustados para un ancho de página A4 estándar (aprox 6.5 pulgadas útiles)
+  width(j = "Region", width = 0.7) %>%
+  width(j = "BGC_Product", width = 1.3) %>%
+  width(j = c("Total_Genes", "Total_Biosynthetic"), width = 0.7) %>%
+  width(j = c("All_Bio_Up_8h", "All_Bio_Up_13h"), width = 0.8) %>%
+  width(j = c("Mean_LFC_8h", "Mean_LFC_13h"), width = 0.8) %>%
+  
+  # Compactar relleno vertical y horizontal
+  padding(padding.top = 3, padding.bottom = 3, padding.left = 2, padding.right = 2, part = "all")
+
+# 3. Exportar a Word
+save_as_docx(ft_main, path = here("results/Tabla_BGC_Dynamics_Formatted.docx"))
+```
+
+
+```{r}
+#-----------------#
+# Gráficas - BGCs # 
+#-----------------#
+# Exportación Tabla Master de genes y BGCs
+write_csv(bgc_deg_master, here("results/anexo_BGC_genes_master_table.csv"))
+
+# FIGURA 1: Heatmap dinámico (Mean LFC 8h vs 13h)           
+mat_bgc <- bgc_dynamics_table %>%
+  select(Region, Mean_LFC_8h, Mean_LFC_13h) %>%
+  column_to_rownames("Region") %>%
+  rename("8 h" = Mean_LFC_8h, "13 h" = Mean_LFC_13h) %>%
+  as.matrix()
+
+# Paleta personalizada (azul = repressed, rojo = Induced)
+my_palette <- colorRampPalette(c("royalblue", "white", "red"))(100) # Colores
+
+print(
+pheatmap(
+  mat_bgc, 
+  display_numbers = TRUE,
+  number_format = "%.2f",
+  cluster_rows = TRUE,       # Agrupación de clústers por comportamiento
+  cluster_cols = FALSE,
+  color = my_palette,
+  breaks = seq(-1.8, 1.8, length.out = 101),
+  fontsize_title  = 10,
+  angle_col = "0",
+  main = "Dinámica Transcripcional de BGCs (Mean LFC 8h vs 13h)",
+  filename = here("results/figures/Fig_Dinamica_Transcripcional_de_BGCs.png"),
+  width = 6, height = 7))
+
+# FIGURA 2: Respuesta de Maquinaria Biosintética a las 13h           
+fig_biosynthetic_13h <- bgc_deg_master %>%
+  filter(Gene_Kind %in% c("biosynthetic", "biosynthetic-additional")) %>%
+  ggplot(aes(x = reorder(Region, as.numeric(str_extract(Region, "\\d+"))), fill = status_13h)) +
+  geom_bar(position = "stack", color = "black", linewidth = 0.3, width = 0.7) +
+  scale_fill_manual(
+    values = c("Up" = "red","Down" = "royalblue","NoDEG" = "grey"),
+    labels = c("Up" = "Sobreexpresado","Down" = "Reprimido","NoDEG" = "Sin cambio / No DEG")) +
+  coord_flip() +
+  theme_bw(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position  = "top",
+    axis.title       = element_text(face = "bold")) +
+  labs(
+    title = "Estado Transcripcional de Genes Biosintéticos (13 h)",
+    x     = "Región Biosintética (BGC)",
+    y     = "Número de Genes (Core + Additional)",
+    fill  = "Respuesta:")
+
+print(fig_biosynthetic_13h)
+
+# Exportación 
+ggsave(
+  filename = here("results/figures/Fig_Estado_Transcripcional_de_Genes_Biosintéticos.png"),
+  plot     = fig_biosynthetic_13h,
+  width    = 8, height = 6, dpi = 300)
+```
+
+```{r}
+#------------------#
+# Tabla MEMORIA QC #
+#------------------#
+tsv_path <- normalizePath(here("reports", "sequencing_report_table.tsv"))
+df <- read.delim(tsv_path, check.names = FALSE, stringsAsFactors = FALSE)
+
+# Limpieza de asteriscos y espacios residuales
+df[] <- lapply(df, function(x) gsub("\\*\\*", "", trimws(x)))
+
+# Identificar el número de columnas para repartir anchos dinámicamente o fijar manualmente
+num_cols <- ncol(df)
+
+# Construcción de la tabla con flextable
+ft_qc <- flextable(df) %>%
+  theme_vanilla() %>%
+  
+  # Tipografía uniforme
+  fontsize(size = 8.5, part = "all") %>%
+  fontsize(size = 8.5, part = "header") %>%
+  bold(part = "header") %>%
+  bg(bg = "white", part = "header") %>%
+  
+  # Alineación: texto descriptivo a la izquierda, métricas/números al centro
+  align(align = "center", part = "all") %>%
+  align(j = 1:2, align = "left", part = "body") %>%
+  
+  # Ajustado diseño A4
+  width(j = 1, width = 1.8) %>%
+  width(j = 2, width = 1.1) %>%
+  width(j = 3:num_cols, width = (6.5 - 1.8 - 1.1) / (num_cols - 2)) %>%
+  set_table_properties(layout = "fixed") %>%
+  padding(padding.top = 3, padding.bottom = 3, padding.left = 2, padding.right = 2, part = "all")
+
+# Exportación directa a la carpeta results como .docx
+save_as_docx(ft_qc, path = here("results/Tabla_QC_Summary_Formatted.docx"))
+```
+
+
+

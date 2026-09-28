@@ -1,0 +1,13 @@
+# Excluir archivos pesados o temporales
+data/raw/*
+!data/raw/reference_strain_83/
+data/processed/trimmed/
+data/processed/aligned/
+data/processed/reference_index/
+*.bam
+*.bai
+*.fastq.gz
+*.sam
+.Rproj.user/
+.Rhistory
+.RData

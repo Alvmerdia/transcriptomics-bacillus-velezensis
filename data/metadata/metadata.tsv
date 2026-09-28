@@ -1,0 +1,13 @@
+sample	condition	time	replicate	group
+SRR19176853	coculture	13h	3	coculture_13h
+SRR19176854	coculture	13h	2	coculture_13h
+SRR19176855	coculture	13h	1	coculture_13h
+SRR19176856	coculture	8h	3	coculture_8h
+SRR19176857	coculture	8h	2	coculture_8h
+SRR19176858	coculture	8h	1	coculture_8h
+SRR19176859	axenic	13h	3	axenic_13h
+SRR19176860	axenic	13h	2	axenic_13h
+SRR19176861	axenic	13h	1	axenic_13h
+SRR19176862	axenic	8h	3	axenic_8h
+SRR19176863	axenic	8h	2	axenic_8h
+SRR19176864	axenic	8h	1	axenic_8h

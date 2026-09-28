@@ -1,0 +1,15 @@
+Status	data/processed/aligned/SRR19176853.bam	data/processed/aligned/SRR19176854.bam	data/processed/aligned/SRR19176855.bam	data/processed/aligned/SRR19176856.bam	data/processed/aligned/SRR19176857.bam	data/processed/aligned/SRR19176858.bam	data/processed/aligned/SRR19176859.bam	data/processed/aligned/SRR19176860.bam	data/processed/aligned/SRR19176861.bam	data/processed/aligned/SRR19176862.bam	data/processed/aligned/SRR19176863.bam	data/processed/aligned/SRR19176864.bam
+Assigned	4299119	4702130	7338944	5229245	4838381	7297840	6806271	5935332	4101495	3668314	6360862	3826177
+Unassigned_Unmapped	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_Read_Type	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_Singleton	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_MappingQuality	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_Chimera	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_FragmentLength	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_Duplicate	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_MultiMapping	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_Secondary	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_NonSplit	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_NoFeatures	164966	170250	217318	224081	197173	252859	218750	207265	120585	124362	184078	148503
+Unassigned_Overlapping_Length	0	0	0	0	0	0	0	0	0	0	0	0
+Unassigned_Ambiguity	311314	341586	511448	444998	374806	517507	536960	449249	274767	356966	607766	369301

@@ -1,0 +1,8 @@
+
+/// MultiQC 🔍 v1.35
+
+       file_search | Search path: /home/alvaro/Documents/projects/tfm_bacillus_velezensis/data/processed/qc
+            fastqc | Found 24 reports
+     write_results | Data        : data/processed/qc/multiqc_data
+     write_results | Report      : data/processed/qc/multiqc_report.html
+           multiqc | MultiQC complete

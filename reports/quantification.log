@@ -1,0 +1,155 @@
+=== Iniciando cuantificación con featureCounts (Stranded: Reverse, -s 2) ===
+
+        ==========     _____ _    _ ____  _____  ______          _____  
+        =====         / ____| |  | |  _ \|  __ \|  ____|   /\   |  __ \ 
+          =====      | (___ | |  | | |_) | |__) | |__     /  \  | |  | |
+            ====      \___ \| |  | |  _ <|  _  /|  __|   / /\ \ | |  | |
+              ====    ____) | |__| | |_) | | \ \| |____ / ____ \| |__| |
+        ==========   |_____/ \____/|____/|_|  \_\______/_/    \_\_____/
+	  v2.1.1
+
+//========================== featureCounts setting ===========================\\
+||                                                                            ||
+||             Input files : 12 BAM files                                     ||
+||                                                                            ||
+||                           SRR19176853.bam                                  ||
+||                           SRR19176854.bam                                  ||
+||                           SRR19176855.bam                                  ||
+||                           SRR19176856.bam                                  ||
+||                           SRR19176857.bam                                  ||
+||                           SRR19176858.bam                                  ||
+||                           SRR19176859.bam                                  ||
+||                           SRR19176860.bam                                  ||
+||                           SRR19176861.bam                                  ||
+||                           SRR19176862.bam                                  ||
+||                           SRR19176863.bam                                  ||
+||                           SRR19176864.bam                                  ||
+||                                                                            ||
+||             Output file : gene_counts.txt                                  ||
+||                 Summary : gene_counts.txt.summary                          ||
+||              Paired-end : yes                                              ||
+||        Count read pairs : no                                               ||
+||              Annotation : genomic.gff (GTF)                                ||
+||      Dir for temp files : data/processed/counts                            ||
+||                                                                            ||
+||                 Threads : 12                                               ||
+||                   Level : meta-feature level                               ||
+||      Multimapping reads : not counted                                      ||
+|| Multi-overlapping reads : not counted                                      ||
+||   Min overlapping bases : 1                                                ||
+||                                                                            ||
+\\============================================================================//
+
+//================================= Running ==================================\\
+||                                                                            ||
+|| Load annotation file genomic.gff ...                                       ||
+||    Features : 3826                                                         ||
+||    Meta-features : 3825                                                    ||
+||    Chromosomes/contigs : 1                                                 ||
+||                                                                            ||
+|| Process BAM file SRR19176853.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 4775399                                              ||
+||    Successfully assigned alignments : 4299119 (90.0%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176854.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 5213966                                              ||
+||    Successfully assigned alignments : 4702130 (90.2%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176855.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 8067710                                              ||
+||    Successfully assigned alignments : 7338944 (91.0%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176856.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 5898324                                              ||
+||    Successfully assigned alignments : 5229245 (88.7%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176857.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 5410360                                              ||
+||    Successfully assigned alignments : 4838381 (89.4%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176858.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 8068206                                              ||
+||    Successfully assigned alignments : 7297840 (90.5%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176859.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 7561981                                              ||
+||    Successfully assigned alignments : 6806271 (90.0%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176860.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 6591846                                              ||
+||    Successfully assigned alignments : 5935332 (90.0%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176861.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 4496847                                              ||
+||    Successfully assigned alignments : 4101495 (91.2%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176862.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 4149642                                              ||
+||    Successfully assigned alignments : 3668314 (88.4%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176863.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 7152706                                              ||
+||    Successfully assigned alignments : 6360862 (88.9%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Process BAM file SRR19176864.bam...                                        ||
+||    Strand specific : reversely stranded                                    ||
+||    Paired-end reads are included.                                          ||
+||    The reads are assigned on the single-end mode.                          ||
+||    Total alignments : 4343981                                              ||
+||    Successfully assigned alignments : 3826177 (88.1%)                      ||
+||    Running time : 0.01 minutes                                             ||
+||                                                                            ||
+|| Write the final count table.                                               ||
+|| Write the read assignment summary.                                         ||
+||                                                                            ||
+|| Summary of counting results can be found in file "data/processed/counts/g  ||
+|| ene_counts.txt.summary"                                                    ||
+||                                                                            ||
+\\============================================================================//
+
+=== Generando matriz simplificada de conteos ===
+=== Cuantificación completada exitosamente ===

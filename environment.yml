@@ -1,0 +1,48 @@
+name: tfm_rnaseq
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+# Lenguajes base
+  - python=3.10
+  - r-base=4.3
+
+# Procesado y QC
+  - sra-tools
+  - pigz
+  - fastp
+  - fastqc
+  - multiqc
+  - gffread
+
+# Alineamiento y cuantificación
+  - subread
+  - samtools
+  - bowtie2
+
+# Paquetes de R
+  - bioconductor-deseq2
+  - bioconductor-edger
+  - bioconductor-apeglm
+  - bioconductor-clusterprofiler
+  - bioconductor-enrichplot
+  - bioconductor-keggrest
+  - r-tidyverse
+  - r-rmarkdown
+  - r-knitr
+  - r-pheatmap
+  - r-here
+  - r-ashr
+  - r-ggvenndiagram
+  - r-rjson
+  - r-gt
+  - r-tidytext
+  - r-gggenes
+  - r-flextable
+  - r-officer
+  - r-ggvenn
+
+# Ontología funcional
+  - bioconductor-go.db
+  - bioconductor-annotationdbi
