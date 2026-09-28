@@ -1,7 +1,7 @@
-================================================================================================================
+============================================================================================================
 MATERIAL SUPLEMENTARIO Y CÓDIGO FUENTE - TFM
 Análisis del perfil transcriptómico de Bacillus velezensis en su interacción con Colletotrichum gloeosporioides
-================================================================================================================
+============================================================================================================
 
 1. REQUISITOS DE ENTORNO Y REPRODUCIBILIDAD
 -------------------------------------------------------------------------------
@@ -63,8 +63,7 @@ Análisis del perfil transcriptómico de Bacillus velezensis en su interacción 
 
 NOTAS:
 ---------
-Por limitación de tamaño de archivo, las subcarpetas dentro de '/data/raw' y '/data/processed' han sido reducidas
-a aquellas indispensables para reproducibilidad, como metadata.tsv.
+Por limitación de tamaño de archivo, las subcarpetas dentro de '/data/raw' y '/data/processed' han sido reducidas a aquellas indispensables para reproducibilidad, como metadata.tsv.
 
 Algunos scripts (03.sh y 05.sh) asumen la presencia del genoma de referencia, ensamblado NCBI RefSeq GCF_004101805.1 (ASM410180v1) contenido en 'data/raw/reference_strain_83/'.
 
